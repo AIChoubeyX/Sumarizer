@@ -4,7 +4,7 @@ import "./App.css";
 
 function App() {
   // ⚠ ADD YOUR GEMINI API KEY HERE ⚠
-  const GEMINI_KEY = "AIzaSyA-MlCOrdYs4dBiaVGpvrHGv89CjBoqncY"; // <--- replace this
+  const GEMINI_KEY = ""; // <--- replace this
 
   const [url, setUrl] = useState("");
   const [articleText, setArticleText] = useState("");
