@@ -1,10 +1,10 @@
 import { useState } from "react";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 import "./App.css";
 
 function App() {
-  // ⚠️ ADD YOUR API KEY HERE ⚠️
-  // Get your key from: https://platform.openai.com/api-keys
-  const API_KEY = "YOUR_OPENAI_API_KEY_HERE"; // 👈 REPLACE THIS WITH YOUR ACTUAL API KEY
+  // ⚠ ADD YOUR GEMINI API KEY HERE ⚠
+  const GEMINI_KEY = "AIzaSyA-MlCOrdYs4dBiaVGpvrHGv89CjBoqncY"; // <--- replace this
 
   const [url, setUrl] = useState("");
   const [articleText, setArticleText] = useState("");
@@ -19,71 +19,93 @@ function App() {
     setError("");
   }
 
+  // ------------------- FETCH ARTICLE CONTENT -------------------
   async function fetchArticleContent(articleUrl) {
     let cleanUrl = articleUrl.trim();
     if (!/^https?:\/\//i.test(cleanUrl)) {
       cleanUrl = "https://" + cleanUrl;
     }
 
+    // ⚠️ MULTIPLE PROXY OPTIONS - Try these if one fails:
+    // Option 1: Jina Reader (Best for articles)
     const readerUrl = "https://r.jina.ai/" + cleanUrl;
+    
+    // Option 2: AllOrigins (backup)
+    // const proxyUrl = "https://api.allorigins.win/raw?url=" + encodeURIComponent(cleanUrl);
+    
+    // Option 3: CORS Anywhere (if you set it up)
+    // const proxyUrl = "https://cors-anywhere.herokuapp.com/" + cleanUrl;
+
     const res = await fetch(readerUrl);
 
     if (!res.ok) {
-      throw new Error("Failed to fetch article content. Status: " + res.status);
+      throw new Error(
+        `Failed to fetch article content. Status: ${res.status}. 
+Some news sites block scraping. Try another link.`
+      );
     }
 
-    const text = await res.text(); // Jina returns markdown/plain text
-    return text;
+    return await res.text();
   }
 
-  async function summarizeWithOpenAI(articleText, apiKey) {
-    const endpoint = "https://api.openai.com/v1/chat/completions";
-
-    const body = {
-      model: "gpt-4o-mini", // ⚠️ YOU CAN CHANGE THIS: Use "gpt-4o-mini" (cheap & fast) or "gpt-4o" (more powerful)
-      messages: [
-        {
-          role: "system",
-          content:
-            "You are an assistant that summarizes news and articles clearly and concisely.",
-        },
-        {
-          role: "user",
-          content:
-            "Summarize the following article in 5 short bullet points in simple English. " +
-            "Focus on the main ideas, not small details.\n\n" +
-            articleText,
-        },
-      ],
-      temperature: 0.3,
-    };
-
-    const res = await fetch(endpoint, {
+  // ------------------- SUMMARIZE WITH GEMINI -------------------
+  async function summarizeWithGemini(articleText) {
+    // ⚠️ LIST AVAILABLE MODELS FIRST
+    const listEndpoint = `https://generativelanguage.googleapis.com/v1beta/models?key=${GEMINI_KEY}`;
+    const listResponse = await fetch(listEndpoint);
+    
+    if (!listResponse.ok) {
+      throw new Error(`Failed to list models: ${listResponse.status}`);
+    }
+    
+    const models = await listResponse.json();
+    console.log("Available models:", models);
+    
+    // Find first model that supports generateContent
+    const availableModel = models.models?.find(m => 
+      m.supportedGenerationMethods?.includes("generateContent")
+    );
+    
+    if (!availableModel) {
+      throw new Error("No available models found for your API key");
+    }
+    
+    console.log("Using model:", availableModel.name);
+    
+    // Use the found model
+    const endpoint = `https://generativelanguage.googleapis.com/v1beta/${availableModel.name}:generateContent?key=${GEMINI_KEY}`;
+    
+    const response = await fetch(endpoint, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: "Bearer " + apiKey,
       },
-      body: JSON.stringify(body),
+      body: JSON.stringify({
+        contents: [{
+          parts: [{
+            text: "Summarize the following article in 5 short bullet points in simple English:\n\n" + articleText
+          }]
+        }]
+      })
     });
 
-    if (!res.ok) {
-      const errText = await res.text();
-      throw new Error("OpenAI error: " + errText);
+    if (!response.ok) {
+      const errorData = await response.text();
+      throw new Error(`Gemini API Error: ${response.status} - ${errorData}`);
     }
 
-    const data = await res.json();
-    const message = data.choices?.[0]?.message?.content ?? "No summary produced.";
-    return message.trim();
+    const data = await response.json();
+    return data.candidates[0].content.parts[0].text;
   }
 
+  // ------------------- HANDLE BUTTON -------------------
   const handleSummarize = async () => {
     if (!url.trim()) {
-      setError("Please paste an article or news URL first.");
+      setError("Paste an article URL first.");
       return;
     }
-    if (API_KEY === "YOUR_OPENAI_API_KEY_HERE") {
-      setError("Please add your OpenAI API key in the code (App.jsx line 6).");
+    if (GEMINI_KEY === "YOUR_GEMINI_API_KEY") {
+      setError("Add your Gemini API key in the code.");
       return;
     }
 
@@ -92,45 +114,40 @@ function App() {
     setSummary("Summary will appear here...");
 
     try {
-      // 1. Get article text
+      // 1. Fetch article
       const content = await fetchArticleContent(url);
-      const limitedContent = content.slice(0, 15000); // safety limit
+      const limited = content.slice(0, 15000);
 
-      setArticleText(limitedContent);
+      setArticleText(limited);
 
-      // 2. Summarize with AI
-      setLoadingState(true, "Summarizing with AI...");
-      const summaryText = await summarizeWithOpenAI(limitedContent, API_KEY);
+      // 2. Summarize with Gemini
+      setLoadingState(true, "Summarizing with Gemini...");
+      const summaryText = await summarizeWithGemini(limited);
+
       setSummary(summaryText);
-
       setLoadingState(false, "Done ✅");
     } catch (err) {
       console.error(err);
       setLoading(false);
       setStatus("");
-      setError(err.message || "Something went wrong. Check console.");
+      setError(err.message);
     }
   };
 
   return (
     <div className="app">
       <header>
-        <div>
-          <h1>AI Article Summarizer</h1>
-          <p className="subtitle">
-            Paste any news / article link and get a short summary in seconds.
-          </p>
-        </div>
+        <h1>AI Article Summarizer</h1>
+        <p>Paste any news/article link & get summary instantly (FREE Gemini API).</p>
       </header>
 
       <main>
         <section className="card">
           <div className="field">
-            <label htmlFor="url">Article / News URL</label>
+            <label>Article URL</label>
             <input
-              id="url"
               type="url"
-              placeholder="https://example.com/your-article"
+              placeholder="https://example.com/article"
               value={url}
               onChange={(e) => setUrl(e.target.value)}
             />
@@ -140,47 +157,29 @@ function App() {
             {loading ? "Summarizing..." : "⚡ Summarize Article"}
           </button>
 
-          <div className="status-row">
-            {status && (
-              <div className="status">
-                {status}
-                {loading && (
-                  <>
-                    <span className="dot" />
-                    <span className="dot" />
-                    <span className="dot" />
-                  </>
-                )}
-              </div>
-            )}
-            {error && <div className="error">{error}</div>}
-          </div>
+          {status && <div className="status">{status}</div>}
+          {error && <div className="error">{error}</div>}
         </section>
 
         <section className="grid">
           <div className="col">
             <div className="card">
-              <div className="card-title">Extracted Article Content</div>
-              <textarea
-                readOnly
-                value={articleText}
-                placeholder="Article content will appear here..."
-              />
+              <h3>Extracted Article</h3>
+              <textarea readOnly value={articleText} />
             </div>
           </div>
+
           <div className="col">
             <div className="card">
-              <div className="card-title">AI Summary</div>
-              <pre className="summary">{summary}</pre>
+              <h3>AI Summary</h3>
+              <pre>{summary}</pre>
             </div>
           </div>
         </section>
       </main>
 
       <footer>
-        <span className="tiny">
-          💡 Tip: Add your OpenAI API key in App.jsx (line 6). For production apps, use a backend server.
-        </span>
+        <span>Using Google Gemini 1.5 Flash (Free Tier)</span>
       </footer>
     </div>
   );
